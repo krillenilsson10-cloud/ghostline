@@ -786,6 +786,8 @@ button.mini{padding:6px 10px;font-size:12px;border-radius:9px;float:right;font-w
 .leaflet-control-attribution{background:rgba(11,13,16,.72)!important;color:#8b97a3!important;font-size:9px}
 .leaflet-control-attribution a{color:#8b97a3!important}
 .arm-on{background:var(--acid)!important;color:#0b0d10!important;border-color:var(--acid)!important}
+.nameRow{margin-top:8px;align-items:center;gap:10px}
+.nameRow button{padding:8px 12px;font-size:12px;border-radius:10px}
 </style>
 </head>
 <body>
@@ -846,6 +848,10 @@ button.mini{padding:6px 10px;font-size:12px;border-radius:9px;float:right;font-w
       <input id="roomInput" placeholder="RUM-KOD" maxlength="12" autocapitalize="characters" />
       <button id="joinBtn">Gå med</button>
       <button id="createBtn">Skapa rum</button>
+    </div>
+    <div class="row nameRow">
+      <button id="renameBtn" class="ghost">Byt namn</button>
+      <span id="myName" class="muted"></span>
     </div>
     <p class="hint">Öppna appen på kompisens telefon, gå med i samma rum och kör. Tiderna jämförs live.</p>
     <ul id="peers" class="list peers"></ul>
@@ -1245,6 +1251,7 @@ async function joinRoom(code) {
   }
   state.room = clean;
   localStorage.setItem(STORE.room, clean);
+  updateMyName();
   $('#roomInput').value = clean;
   connectMqtt();
 }
@@ -1613,6 +1620,11 @@ function renderCheckpoints() {
   });
 }
 
+function updateMyName() {
+  const el = $('#myName');
+  if (el) el.textContent = state.name ? `Du heter: ${state.name}` : '';
+}
+
 function renderPeers() {
   const el = $('#peers');
   el.innerHTML = '';
@@ -1740,6 +1752,15 @@ function init() {
     joinRoom(code);
   });
   $('#joinBtn').addEventListener('click', () => joinRoom($('#roomInput').value));
+  $('#renameBtn').addEventListener('click', async () => {
+    const n = await askName('Ditt namn (visas för kompisarna)', state.name || 'Förare');
+    if (!n) return;
+    state.name = n.trim().slice(0, 16) || 'Förare';
+    localStorage.setItem(STORE.name, state.name);
+    updateMyName();
+    publish();
+    toast(`Namn sparat: ${state.name}`);
+  });
   $('#roomInput').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') joinRoom($('#roomInput').value);
   });
@@ -1796,6 +1817,7 @@ function init() {
     setArmed(false);
   });
 
+  updateMyName();
   renderCheckpoints();
   renderSplits();
   renderHistory();
