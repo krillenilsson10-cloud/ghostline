@@ -856,6 +856,7 @@ body.hud .hudExit{display:block}
       <button id="armMap" class="ghost">Sätt punkt på kartan</button>
       <button id="drawTrack" class="ghost">Rita bana</button>
       <button id="autoRoad" class="ghost">Följ väg</button>
+      <button id="startLineBtn" class="ghost">Startlinje</button>
       <button id="undoTrack" class="ghost">Ångra</button>
       <button id="clearTrack" class="ghost">Rensa bana</button>
       <button id="resetMap" class="ghost">Hela Sverige</button>
@@ -958,6 +959,7 @@ const STORE = {
   room: 'ghostline.room',
   id: 'ghostline.id',
   track: 'ghostline.track',
+  startLine: 'ghostline.startline',
   vehicle: 'ghostline.vehicle',
 };
 
@@ -1150,6 +1152,9 @@ const state = {
   nextAutoSplit: 0,
   trace: [],
   traceTs: 0,
+  startLine: load(STORE.startLine, null),
+  laps: 0,
+  lastLapTs: 0,
 };
 
 const BROKER = 'wss://broker.hivemq.com:8884/mqtt';
@@ -1216,6 +1221,16 @@ function onPosition(pos) {
       while (state.autoSplitM > 0 && state.dist >= state.nextAutoSplit) {
         addSplit(`${(state.nextAutoSplit / 1000).toFixed(1)} km`, true);
         state.nextAutoSplit += state.autoSplitM;
+      }
+      if (state.startLine && state.running) {
+        const p1 = [state.last.coords.latitude, state.last.coords.longitude];
+        const p2 = [c.latitude, c.longitude];
+        if (Date.now() - state.lastLapTs > 8000 &&
+            segIntersect(p1, p2, state.startLine[0], state.startLine[1])) {
+          state.lastLapTs = Date.now();
+          state.laps = (state.laps || 0) + 1;
+          addSplit(`Varv ${state.laps}`, true);
+        }
       }
     }
   }
@@ -1291,6 +1306,8 @@ function startRun() {
   state.passed.clear();
   state.trace = [];
   state.traceTs = 0;
+  state.laps = 0;
+  state.lastLapTs = 0;
   state.nextAutoSplit = state.autoSplitM;
   $('#startBtn').textContent = 'STOPP';
   $('#startBtn').classList.add('stop');
@@ -1503,6 +1520,9 @@ let trackLine = null;
 let drawMode = false;
 let autoRoad = localStorage.getItem('ghostline.autoroad') !== '0';
 let routing = false;
+let lineMode = 0;
+let lineA = null;
+let startLineLayer = null;
 let roomTrackSeen = false;
 
 function initMap() {
@@ -1517,12 +1537,28 @@ function initMap() {
   }).addTo(map);
   cpLayer = L.layerGroup().addTo(map);
 
+  setLineBtn();
+  if (state.startLine) drawStartLine();
   if (track.length > 1) {
     trackLine = L.polyline(track, { color: '#c8ff00', weight: 4, opacity: 0.85 }).addTo(map);
     updateTrackInfo();
   }
 
   map.on('click', async (e) => {
+    if (lineMode === 1) {
+      lineA = e.latlng;
+      lineMode = 2;
+      toast('Tryck på linjens slutpunkt');
+      return;
+    }
+    if (lineMode === 2) {
+      state.startLine = [[lineA.lat, lineA.lng], [e.latlng.lat, e.latlng.lng]];
+      save(STORE.startLine, state.startLine);
+      lineMode = 0;
+      drawStartLine();
+      toast('Startlinje satt – varv räknas när du kör över');
+      return;
+    }
     if (drawMode) {
       addTrackPoint(e.latlng);
       return;
@@ -1729,6 +1765,41 @@ function clearTrack() {
   }
   updateTrackInfo();
   clearSharedTrack();
+}
+
+function segIntersect(p1, p2, p3, p4) {
+  const ccw = (a, b, c) => (c[1] - a[1]) * (b[0] - a[0]) - (b[1] - a[1]) * (c[0] - a[0]);
+  const d1 = ccw(p1, p2, p3);
+  const d2 = ccw(p1, p2, p4);
+  const d3 = ccw(p3, p4, p1);
+  const d4 = ccw(p3, p4, p2);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+function setLineBtn() {
+  const b = $('#startLineBtn');
+  if (b) b.textContent = state.startLine ? 'Rensa startlinje' : 'Startlinje';
+}
+
+function drawStartLine() {
+  if (!map) return;
+  if (startLineLayer) {
+    map.removeLayer(startLineLayer);
+    startLineLayer = null;
+  }
+  if (state.startLine && state.startLine.length === 2) {
+    startLineLayer = L.polyline(state.startLine, {
+      color: '#ff5a3c', weight: 4, dashArray: '8 6', opacity: 0.95,
+    }).addTo(map);
+  }
+  setLineBtn();
+}
+
+function clearStartLine() {
+  state.startLine = null;
+  save(STORE.startLine, null);
+  drawStartLine();
+  toast('Startlinje borttagen');
 }
 
 function drawPeers() {
@@ -2053,6 +2124,13 @@ function init() {
   });
   $('#drawTrack').addEventListener('click', () => setDrawMode(!drawMode));
   $('#autoRoad').addEventListener('click', () => setAutoRoad(!autoRoad));
+  $('#startLineBtn').addEventListener('click', () => {
+    if (state.startLine) { clearStartLine(); return; }
+    lineMode = 1;
+    setArmed(false);
+    setDrawMode(false);
+    toast('Tryck på kartans startpunkt för linjen');
+  });
   const ar = $('#autoRoad');
   ar.classList.toggle('arm-on', autoRoad);
   ar.textContent = autoRoad ? 'Följ väg: PÅ' : 'Följ väg: AV';
