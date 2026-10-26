@@ -1,4 +1,5 @@
-const CACHE = 'ghostline-v6';
+const CACHE = 'ghostline-v7';
+const TILES = 'ghostline-tiles-v2';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192-v3.png', './icon-512-v3.png'];
 
 self.addEventListener('install', (e) => {
@@ -8,7 +9,7 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE && k !== TILES).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -16,6 +17,25 @@ self.addEventListener('activate', (e) => {
 self.addEventListener('fetch', (e) => {
   if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
+
+  // offline map tiles (visited areas keep working without network)
+  if (/(^|\.)tile\.openstreetmap\.org$/.test(url.hostname)) {
+    e.respondWith(
+      caches.open(TILES).then(async (c) => {
+        const hit = await c.match(e.request);
+        if (hit) return hit;
+        try {
+          const res = await fetch(e.request);
+          if (res && res.status === 200) c.put(e.request, res.clone());
+          return res;
+        } catch (err) {
+          return hit || Response.error();
+        }
+      })
+    );
+    return;
+  }
+
   if (url.origin !== location.origin) return;
 
   // network-first for navigations so updates show up immediately
