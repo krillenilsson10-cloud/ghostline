@@ -788,6 +788,8 @@ button.mini{padding:6px 10px;font-size:12px;border-radius:9px;float:right;font-w
 .arm-on{background:var(--acid)!important;color:#0b0d10!important;border-color:var(--acid)!important}
 .nameRow{margin-top:8px;align-items:center;gap:10px}
 .nameRow button{padding:8px 12px;font-size:12px;border-radius:10px}
+.nameRow select{background:#0d1116;border:1px solid var(--line);border-radius:10px;color:var(--txt);
+  padding:8px 10px;font:inherit;font-size:12px;max-width:130px}
 </style>
 </head>
 <body>
@@ -851,6 +853,12 @@ button.mini{padding:6px 10px;font-size:12px;border-radius:9px;float:right;font-w
     </div>
     <div class="row nameRow">
       <button id="renameBtn" class="ghost">Byt namn</button>
+      <select id="vehicleSel" aria-label="Fordon">
+        <option value="bil">🚗 Bil</option>
+        <option value="mc">🏍️ MC</option>
+        <option value="moped">🛵 Moped</option>
+        <option value="cykel">🚲 Cykel</option>
+      </select>
       <span id="myName" class="muted"></span>
     </div>
     <p class="hint">Öppna appen på kompisens telefon, gå med i samma rum och kör. Tiderna jämförs live.</p>
@@ -917,6 +925,7 @@ const STORE = {
   room: 'ghostline.room',
   id: 'ghostline.id',
   track: 'ghostline.track',
+  vehicle: 'ghostline.vehicle',
 };
 
 function uid() {
@@ -1015,6 +1024,9 @@ const askConfirm = (title, okText = 'Ja') => askModal({ title, confirmMode: true
 
 
 /* ------------------------------------------------------------------ state */
+const VEHICLES = { bil: '🚗', mc: '🏍️', moped: '🛵', cykel: '🚲' };
+const VEHICLE_NAMES = { bil: 'Bil', mc: 'MC', moped: 'Moped', cykel: 'Cykel' };
+
 const state = {
   running: false,
   startTs: 0,
@@ -1039,6 +1051,7 @@ const state = {
   demo: false,
   wakeLock: null,
   wakeTimer: null,
+  vehicle: (typeof localStorage !== 'undefined' && localStorage.getItem('ghostline.vehicle')) || 'bil',
 };
 
 const BROKER = 'wss://broker.hivemq.com:8884/mqtt';
@@ -1348,6 +1361,7 @@ function publish() {
   const payload = {
     id: state.myId,
     name: state.name || 'Förare',
+    vehicle: state.vehicle || 'bil',
     lat: pos ? pos.latitude : null,
     lng: pos ? pos.longitude : null,
     speed: Math.round(state.speed),
@@ -1636,6 +1650,7 @@ function renderPeers() {
   rows.push({
     id: state.myId,
     name: (state.name || 'Du') + ' (du)',
+    vehicle: state.vehicle || 'bil',
     speed: Math.round(state.speed),
     total: state.running ? state.elapsed : 0,
     running: state.running,
@@ -1661,9 +1676,9 @@ function renderPeers() {
     const deltaCls = delta === null ? '' : delta <= 0 ? 'ahead' : 'behind';
     li.innerHTML = `
       <span class="place">${i + 1}</span>
-      <span class="name">${escapeHtml(r.name || 'Förare')}<span class="sub">${
+      <span class="name">${VEHICLES[r.vehicle] || VEHICLES.bil} ${escapeHtml(r.name || 'Förare')}<span class="sub">${
         r.running ? 'kör' : r.total ? 'klar' : 'väntar'
-      }</span></span>
+      } · ${VEHICLE_NAMES[r.vehicle] || 'Bil'}</span></span>
       <span class="spd">${r.speed || 0} km/h</span>
       <span class="delta ${deltaCls}">${deltaTxt}</span>`;
     el.appendChild(li);
@@ -1752,6 +1767,18 @@ function init() {
     joinRoom(code);
   });
   $('#joinBtn').addEventListener('click', () => joinRoom($('#roomInput').value));
+  const vs = $('#vehicleSel');
+  if (vs) {
+    vs.value = state.vehicle || 'bil';
+    vs.addEventListener('change', () => {
+      state.vehicle = vs.value;
+      localStorage.setItem(STORE.vehicle, state.vehicle);
+      publish();
+      renderPeers();
+      toast(`Fordon: ${VEHICLE_NAMES[state.vehicle] || 'Bil'}`);
+    });
+  }
+
   $('#renameBtn').addEventListener('click', async () => {
     const n = await askName('Ditt namn (visas för kompisarna)', state.name || 'Förare');
     if (!n) return;
