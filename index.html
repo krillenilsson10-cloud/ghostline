@@ -1045,9 +1045,20 @@ function startGps() {
   });
 }
 
+let geoErrorShown = null;
 function onGeoError(err) {
   console.warn('GPS-fel', err);
+  state.geoError = err.code;
   $('#gpsDot').classList.remove('on');
+  $('#gpsDot').classList.add('bad');
+  if (geoErrorShown !== err.code) {
+    geoErrorShown = err.code;
+    if (err.code === 1) {
+      toast('Plats nekad – tillåt plats för den här sidan i webbläsarens inställningar.', 7000);
+    } else {
+      toast('Ingen GPS-signal – gå ut eller vänta lite.', 4500);
+    }
+  }
 }
 
 function onPosition(pos) {
@@ -1055,6 +1066,8 @@ function onPosition(pos) {
   const c = pos.coords;
   state.lastFixTs = Date.now();
   $('#gpsDot').classList.add('on');
+  $('#gpsDot').classList.remove('bad');
+  state.geoError = null;
 
   let rawSpeed = c.speed;
   if (rawSpeed == null || isNaN(rawSpeed)) {
@@ -1094,7 +1107,7 @@ function checkAutoCheckpoints(c) {
 
 async function addGpsCheckpoint() {
   if (!state.last) {
-    toast('Väntar på GPS-position… stå still och försök igen.');
+    toast(state.geoError === 1 ? 'Plats är nekad – tillåt plats för sidan i webbläsaren (ikonen vid adressfältet), ladda om och försök igen.' : 'Väntar på GPS-position… stå still och försök igen.', 6000);
     return;
   }
   const name = await askName('Namn på GPS-punkten', `Punkt ${state.cps.length + 1}`);
@@ -1263,15 +1276,19 @@ function connectMqtt() {
     m.recv = Date.now();
     state.peers.set(m.id, m);
     renderPeers();
+    drawPeers();
   });
 }
 
 function publish() {
   const c = state.client;
   if (!c || !c.connected || !state.room) return;
+  const pos = state.last && state.last.coords;
   const payload = {
     id: state.myId,
     name: state.name || 'Förare',
+    lat: pos ? pos.latitude : null,
+    lng: pos ? pos.longitude : null,
     speed: Math.round(state.speed),
     total: state.running ? state.elapsed : 0,
     splits: state.splits.length,
@@ -1293,6 +1310,7 @@ let posMarker = null;
 let accCircle = null;
 let mapArmed = false;
 let mapFollowed = false;
+const peerMarkers = new Map();
 
 function initMap() {
   if (typeof L === 'undefined') {
@@ -1369,6 +1387,36 @@ function drawPosition(c) {
   if (!mapFollowed) {
     mapFollowed = true;
     map.setView(ll, 15);
+  }
+}
+
+
+function drawPeers() {
+  if (!map) return;
+  const now = Date.now();
+  const seen = new Set();
+  for (const [id, p] of state.peers) {
+    if (!p.lat || !p.lng) continue;
+    if (now - (p.recv || 0) > 20000) continue;
+    seen.add(id);
+    let m = peerMarkers.get(id);
+    if (!m) {
+      m = L.circleMarker([p.lat, p.lng], {
+        radius: 7, color: '#4de1ff', fillColor: '#4de1ff', fillOpacity: 0.95, weight: 2,
+      });
+      m.bindTooltip(p.name || 'Förare');
+      m.addTo(map);
+      peerMarkers.set(id, m);
+    } else {
+      m.setLatLng([p.lat, p.lng]);
+      m.setTooltipContent(p.name || 'Förare');
+    }
+  }
+  for (const [id, m] of peerMarkers) {
+    if (!seen.has(id)) {
+      map.removeLayer(m);
+      peerMarkers.delete(id);
+    }
   }
 }
 
@@ -1601,7 +1649,7 @@ function init() {
   }, 120);
 
   setInterval(publish, 1500);
-  setInterval(renderPeers, 2000);
+  setInterval(() => { renderPeers(); drawPeers(); }, 2000);
 
   if (state.room) {
     $('#roomInput').value = state.room;
