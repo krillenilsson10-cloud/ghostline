@@ -820,10 +820,14 @@ button.mini{padding:6px 10px;font-size:12px;border-radius:9px;float:right;font-w
     <h2>Karta <span class="muted" id="mapHint">Hela Sverige</span></h2>
     <div class="maprow">
       <button id="armMap" class="ghost">Sätt punkt på kartan</button>
+      <button id="drawTrack" class="ghost">Rita bana</button>
+      <button id="undoTrack" class="ghost">Ångra</button>
+      <button id="clearTrack" class="ghost">Rensa bana</button>
       <button id="resetMap" class="ghost">Hela Sverige</button>
     </div>
     <div id="map"></div>
-    <p class="hint">Panorera och zooma över hela Sverige. Tryck på kartan när du är i "sätt punkt"-läge.</p>
+    <p class="hint">Rita en bana genom att trycka på kartan, och sätt sedan split-punkter längs den.</p>
+    <p class="hint" id="trackInfo"></p>
   </section>
 
   <section class="card">
@@ -905,6 +909,7 @@ const STORE = {
   name: 'ghostline.name',
   room: 'ghostline.room',
   id: 'ghostline.id',
+  track: 'ghostline.track',
 };
 
 function uid() {
@@ -1311,6 +1316,9 @@ let accCircle = null;
 let mapArmed = false;
 let mapFollowed = false;
 const peerMarkers = new Map();
+let track = load(STORE.track, []);
+let trackLine = null;
+let drawMode = false;
 
 function initMap() {
   if (typeof L === 'undefined') {
@@ -1324,7 +1332,16 @@ function initMap() {
   }).addTo(map);
   cpLayer = L.layerGroup().addTo(map);
 
+  if (track.length > 1) {
+    trackLine = L.polyline(track, { color: '#c8ff00', weight: 4, opacity: 0.85 }).addTo(map);
+    updateTrackInfo();
+  }
+
   map.on('click', async (e) => {
+    if (drawMode) {
+      addTrackPoint(e.latlng);
+      return;
+    }
     if (!mapArmed) return;
     setArmed(false);
     const name = await askName('Namn på punkten', `Punkt ${state.cps.length + 1}`);
@@ -1390,6 +1407,70 @@ function drawPosition(c) {
   }
 }
 
+
+function trackDistance() {
+  let d = 0;
+  for (let i = 1; i < track.length; i++) {
+    d += haversine(
+      { latitude: track[i - 1][0], longitude: track[i - 1][1] },
+      { latitude: track[i][0], longitude: track[i][1] }
+    );
+  }
+  return d;
+}
+
+function updateTrackInfo() {
+  const el = $('#trackInfo');
+  if (!el) return;
+  if (track.length < 2) {
+    el.textContent = track.length ? 'Bana: 1 punkt – tryck vidare.' : '';
+    return;
+  }
+  el.textContent = `Bana: ${(trackDistance() / 1000).toFixed(2)} km · ${track.length} punkter`;
+}
+
+function redrawTrack() {
+  if (!map) return;
+  if (!trackLine) {
+    trackLine = L.polyline(track, { color: '#c8ff00', weight: 4, opacity: 0.85 }).addTo(map);
+  } else {
+    trackLine.setLatLngs(track);
+  }
+  updateTrackInfo();
+}
+
+function addTrackPoint(latlng) {
+  track.push([latlng.lat, latlng.lng]);
+  save(STORE.track, track);
+  redrawTrack();
+  vibrate(15);
+}
+
+function setDrawMode(on) {
+  drawMode = on;
+  const b = $('#drawTrack');
+  b.classList.toggle('arm-on', on);
+  b.textContent = on ? 'Klar med banan' : 'Rita bana';
+  if (on) setArmed(false);
+  if (on) toast('Tryck på kartan för att lägga till banpunkter');
+}
+
+function undoTrack() {
+  if (!track.length) return;
+  track.pop();
+  save(STORE.track, track);
+  redrawTrack();
+}
+
+function clearTrack() {
+  track = [];
+  save(STORE.track, track);
+  if (trackLine) {
+    map.removeLayer(trackLine);
+    trackLine = null;
+  }
+  updateTrackInfo();
+}
 
 function drawPeers() {
   if (!map) return;
@@ -1619,6 +1700,13 @@ function init() {
     setArmed(!mapArmed);
     if (mapArmed) toast('Tryck på kartan där punkten ska vara');
     else toast('Punktläge av');
+  });
+  $('#drawTrack').addEventListener('click', () => setDrawMode(!drawMode));
+  $('#undoTrack').addEventListener('click', undoTrack);
+  $('#clearTrack').addEventListener('click', () => {
+    if (!track.length) return;
+    clearTrack();
+    toast('Banan rensad');
   });
   $('#resetMap').addEventListener('click', () => {
     if (map) map.setView([62.0, 15.0], 4);
