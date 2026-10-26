@@ -1,5 +1,5 @@
-const CACHE = 'ghostline-v5';
-const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192-v4.png', './icon-512-v4.png'];
+const CACHE = 'ghostline-v6';
+const ASSETS = ['./', './index.html', './manifest.webmanifest', './icon-192-v3.png', './icon-512-v3.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
