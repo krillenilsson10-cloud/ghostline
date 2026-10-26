@@ -1288,7 +1288,17 @@ function connectMqtt() {
         const pts = d.points
           .filter((p) => Array.isArray(p) && p.length >= 2 && isFinite(p[0]) && isFinite(p[1]))
           .map((p) => [Number(p[0]), Number(p[1])]);
-        if (pts.length < 2) return;
+        if (pts.length < 2) {
+          roomTrackSeen = true;
+          if (track.length) {
+            track = [];
+            save(STORE.track, []);
+            if (trackLine) { map.removeLayer(trackLine); trackLine = null; }
+            updateTrackInfo();
+            toast('Banan rensades i rummet');
+          }
+          return;
+        }
         roomTrackSeen = true;
         track = pts;
         save(STORE.track, track);
@@ -1305,6 +1315,14 @@ function connectMqtt() {
     renderPeers();
     drawPeers();
   });
+}
+
+function clearSharedTrack() {
+  const c = state.client;
+  if (!c || !c.connected || !state.room) return;
+  try {
+    c.publish(TOPIC_TRACK(state.room), '', { qos: 0, retain: true });
+  } catch {}
 }
 
 function publishTrack() {
@@ -1492,7 +1510,8 @@ function undoTrack() {
   track.pop();
   save(STORE.track, track);
   redrawTrack();
-  publishTrack();
+  if (track.length > 1) publishTrack();
+  else clearSharedTrack();
 }
 
 function clearTrack() {
@@ -1503,7 +1522,7 @@ function clearTrack() {
     trackLine = null;
   }
   updateTrackInfo();
-  publishTrack();
+  clearSharedTrack();
 }
 
 function drawPeers() {
