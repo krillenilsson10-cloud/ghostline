@@ -825,12 +825,13 @@ button.mini{padding:6px 10px;font-size:12px;border-radius:9px;float:right;font-w
     <div class="maprow">
       <button id="armMap" class="ghost">Sätt punkt på kartan</button>
       <button id="drawTrack" class="ghost">Rita bana</button>
+      <button id="autoRoad" class="ghost">Följ väg</button>
       <button id="undoTrack" class="ghost">Ångra</button>
       <button id="clearTrack" class="ghost">Rensa bana</button>
       <button id="resetMap" class="ghost">Hela Sverige</button>
     </div>
     <div id="map"></div>
-    <p class="hint">Rita en bana genom att trycka på kartan, och sätt sedan split-punkter längs den.</p>
+    <p class="hint">Rita en bana genom att trycka på kartan – med "Följ väg" på läggs rutten automatiskt längs närmaste väg. Sätt sedan split-punkter längs banan.</p>
     <p class="hint" id="trackInfo"></p>
   </section>
 
@@ -1389,6 +1390,8 @@ const peerMarkers = new Map();
 let track = load(STORE.track, []);
 let trackLine = null;
 let drawMode = false;
+let autoRoad = localStorage.getItem('ghostline.autoroad') !== '0';
+let routing = false;
 let roomTrackSeen = false;
 
 function initMap() {
@@ -1510,12 +1513,82 @@ function redrawTrack() {
   updateTrackInfo();
 }
 
-function addTrackPoint(latlng) {
-  track.push([latlng.lat, latlng.lng]);
+function fetchJson(url, timeout = 9000) {
+  return new Promise((resolve, reject) => {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), timeout);
+    fetch(url, { signal: ctl.signal })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error('http ' + r.status))))
+      .then((d) => { clearTimeout(t); resolve(d); })
+      .catch((e) => { clearTimeout(t); reject(e); });
+  });
+}
+
+async function snapToRoad(lat, lng) {
+  try {
+    const d = await fetchJson(`https://router.project-osrm.org/nearest/v1/driving/${lng},${lat}?number=1`);
+    const w = d.waypoints && d.waypoints[0];
+    if (w && w.location) return [w.location[1], w.location[0]];
+  } catch {}
+  return null;
+}
+
+async function routeBetween(a, b) {
+  const url = `https://router.project-osrm.org/route/v1/driving/${a[1]},${a[0]};${b[1]},${b[0]}?overview=full&geometries=geojson`;
+  const d = await fetchJson(url, 12000);
+  if (!d.routes || !d.routes[0] || !d.routes[0].geometry) return null;
+  return d.routes[0].geometry.coordinates;
+}
+
+function afterTrackChange() {
   save(STORE.track, track);
   redrawTrack();
   publishTrack();
   vibrate(15);
+}
+
+async function addTrackPoint(latlng) {
+  if (routing) return;
+  const lat = latlng.lat;
+  const lng = latlng.lng;
+
+  if (!autoRoad || track.length === 0) {
+    let p = [lat, lng];
+    if (autoRoad) {
+      const snapped = await snapToRoad(lat, lng);
+      if (snapped) p = snapped;
+    }
+    track.push(p);
+    afterTrackChange();
+    return;
+  }
+
+  const last = track[track.length - 1];
+  routing = true;
+  try {
+    const coords = await routeBetween(last, [lat, lng]);
+    if (coords && coords.length > 1) {
+      for (let i = 1; i < coords.length; i++) track.push([coords[i][1], coords[i][0]]);
+    } else {
+      track.push([lat, lng]);
+      toast('Kunde inte hitta väg – rak linje', 2500);
+    }
+  } catch {
+    track.push([lat, lng]);
+    toast('Vägtjänsten svarar inte – rak linje', 3000);
+  } finally {
+    routing = false;
+    afterTrackChange();
+  }
+}
+
+function setAutoRoad(on) {
+  autoRoad = on;
+  localStorage.setItem('ghostline.autoroad', on ? '1' : '0');
+  const b = $('#autoRoad');
+  b.classList.toggle('arm-on', on);
+  b.textContent = on ? 'Följ väg: PÅ' : 'Följ väg: AV';
+  toast(on ? 'Rutten följer närmaste väg automatiskt' : 'Fri ritning (raka linjer)');
 }
 
 function setDrawMode(on) {
@@ -1833,6 +1906,10 @@ function init() {
     else toast('Punktläge av');
   });
   $('#drawTrack').addEventListener('click', () => setDrawMode(!drawMode));
+  $('#autoRoad').addEventListener('click', () => setAutoRoad(!autoRoad));
+  const ar = $('#autoRoad');
+  ar.classList.toggle('arm-on', autoRoad);
+  ar.textContent = autoRoad ? 'Följ väg: PÅ' : 'Följ väg: AV';
   $('#undoTrack').addEventListener('click', undoTrack);
   $('#clearTrack').addEventListener('click', () => {
     if (!track.length) return;
