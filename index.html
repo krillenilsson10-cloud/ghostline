@@ -1036,6 +1036,7 @@ const state = {
 
 const BROKER = 'wss://broker.hivemq.com:8884/mqtt';
 const TOPIC = (room) => `ghostline/v1/${room}`;
+const TOPIC_TRACK = (room) => `ghostline/v1/${room}/track`;
 
 /* -------------------------------------------------------------------- GPS */
 function startGps() {
@@ -1267,14 +1268,35 @@ function connectMqtt() {
   state.client = client;
 
   client.on('connect', () => {
+    roomTrackSeen = false;
     client.subscribe(TOPIC(state.room), { qos: 0 });
+    client.subscribe(TOPIC_TRACK(state.room), { qos: 0 });
     setLive(true, 'ansluten');
     publish();
+    if (track.length > 1) {
+      setTimeout(() => { if (!roomTrackSeen) publishTrack(); }, 2500);
+    }
   });
   client.on('reconnect', () => setLive(false, 'återansluter…'));
   client.on('close', () => setLive(false, 'frånkopplad'));
   client.on('error', (e) => { console.warn('mqtt', e); setLive(false, 'fel'); });
-  client.on('message', (_topic, buf) => {
+  client.on('message', (topic, buf) => {
+    if (topic.endsWith('/track')) {
+      try {
+        const d = JSON.parse(buf.toString());
+        if (!Array.isArray(d.points)) return;
+        const pts = d.points
+          .filter((p) => Array.isArray(p) && p.length >= 2 && isFinite(p[0]) && isFinite(p[1]))
+          .map((p) => [Number(p[0]), Number(p[1])]);
+        if (pts.length < 2) return;
+        roomTrackSeen = true;
+        track = pts;
+        save(STORE.track, track);
+        redrawTrack();
+        toast('Bana hämtad från rummet');
+      } catch {}
+      return;
+    }
     let m;
     try { m = JSON.parse(buf.toString()); } catch { return; }
     if (!m || !m.id || m.id === state.myId) return;
@@ -1283,6 +1305,14 @@ function connectMqtt() {
     renderPeers();
     drawPeers();
   });
+}
+
+function publishTrack() {
+  const c = state.client;
+  if (!c || !c.connected || !state.room || track.length < 2) return;
+  try {
+    c.publish(TOPIC_TRACK(state.room), JSON.stringify({ points: track, ts: Date.now() }), { qos: 0, retain: true });
+  } catch {}
 }
 
 function publish() {
@@ -1319,6 +1349,7 @@ const peerMarkers = new Map();
 let track = load(STORE.track, []);
 let trackLine = null;
 let drawMode = false;
+let roomTrackSeen = false;
 
 function initMap() {
   if (typeof L === 'undefined') {
@@ -1443,6 +1474,7 @@ function addTrackPoint(latlng) {
   track.push([latlng.lat, latlng.lng]);
   save(STORE.track, track);
   redrawTrack();
+  publishTrack();
   vibrate(15);
 }
 
@@ -1460,6 +1492,7 @@ function undoTrack() {
   track.pop();
   save(STORE.track, track);
   redrawTrack();
+  publishTrack();
 }
 
 function clearTrack() {
@@ -1470,6 +1503,7 @@ function clearTrack() {
     trackLine = null;
   }
   updateTrackInfo();
+  publishTrack();
 }
 
 function drawPeers() {
